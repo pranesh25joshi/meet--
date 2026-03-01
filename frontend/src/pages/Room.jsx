@@ -54,41 +54,65 @@ const Room = () => {
         setSelectedCamera(camId);
         setSelectedMic(micId);
 
-        // Stop the temp stream, the next effect will open the real one
-        tmp.getTracks().forEach(t => t.stop());
+        // Don't stop the temp stream — use it as the initial stream
+        // This avoids re-requesting permissions on mobile
+        streamRef.current = tmp;
+        setLocalStream(tmp);
       } catch (err) {
-        setDeviceError('Camera/mic access denied. Please allow permissions and reload.');
-        console.error(err);
+        console.error('Device init error:', err);
+        if (err.name === 'NotAllowedError') {
+          setDeviceError('Camera/mic access denied. Please allow permissions in your browser settings and reload.');
+        } else if (err.name === 'NotFoundError') {
+          setDeviceError('No camera or microphone found on this device.');
+        } else if (err.name === 'NotReadableError') {
+          setDeviceError('Camera/mic is in use by another app. Please close it and reload.');
+        } else {
+          setDeviceError(`Could not access camera/mic: ${err.message}`);
+        }
       }
     };
     init();
     return () => { alive = false; };
   }, []);
 
-  // ── 2. Open the real stream when device selection changes ─────────
+  // ── 2. Switch stream when device selection changes ────────────────
+  // (skipped on first mount since effect #1 already set the stream)
+  const initialDeviceSet = useRef(false);
   useEffect(() => {
     if (!selectedCamera && !selectedMic) return;
+    // Skip the first trigger — effect #1 already created the stream
+    if (!initialDeviceSet.current) {
+      initialDeviceSet.current = true;
+      return;
+    }
     let alive = true;
 
     const open = async () => {
-      const constraints = {
-        video: selectedCamera ? { deviceId: { exact: selectedCamera } } : true,
-        audio: selectedMic ? { deviceId: { exact: selectedMic } } : true,
-      };
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        if (!alive) { stream.getTracks().forEach(t => t.stop()); return; }
-        // Stop the previous stream
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(t => t.stop());
+      // Try exact device IDs first, fall back to basic constraints (important for mobile)
+      const tryConstraints = [
+        {
+          video: selectedCamera ? { deviceId: { exact: selectedCamera } } : true,
+          audio: selectedMic ? { deviceId: { exact: selectedMic } } : true,
+        },
+        { video: true, audio: true },  // fallback
+      ];
+
+      for (const constraints of tryConstraints) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          if (!alive) { stream.getTracks().forEach(t => t.stop()); return; }
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(t => t.stop());
+          }
+          streamRef.current = stream;
+          setLocalStream(stream);
+          setDeviceError('');
+          return; // success
+        } catch (err) {
+          console.warn('getUserMedia failed with constraints:', constraints, err);
         }
-        streamRef.current = stream;
-        setLocalStream(stream);
-        setDeviceError('');
-      } catch (err) {
-        console.error('getUserMedia error:', err);
-        setDeviceError('Could not open camera/mic: ' + err.message);
       }
+      setDeviceError('Could not switch camera/mic. Using previous device.');
     };
 
     open();
