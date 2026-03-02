@@ -1,13 +1,21 @@
 import { useEffect, useRef } from 'react';
+import useAudioLevel from '../hooks/useAudioLevel';
 
-const StreamVideo = ({ stream, isLocal }) => {
+const StreamVideo = ({ stream, isLocal, label }) => {
   const videoRef = useRef(null);
+  const audioLevel = useAudioLevel(stream, !isLocal); // Don't monitor local (muted)
 
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
   }, [stream]);
+
+  // Speaking glow: blue border like Google Meet
+  const isSpeaking = audioLevel > 0.15;
+  const borderColor = isSpeaking
+    ? `rgba(59, 130, 246, ${0.5 + audioLevel * 0.5})`
+    : 'rgba(255,255,255,0.06)';
 
   return (
     <div style={{
@@ -20,7 +28,9 @@ const StreamVideo = ({ stream, isLocal }) => {
       justifyContent: 'center',
       background: '#111',
       borderRadius: '16px',
-      border: '1px solid rgba(255,255,255,0.06)',
+      border: `2px solid ${borderColor}`,
+      transition: 'border-color 0.2s ease',
+      boxShadow: isSpeaking ? '0 0 16px rgba(59,130,246,0.3)' : 'none',
     }}>
       <video
         ref={videoRef}
@@ -31,7 +41,7 @@ const StreamVideo = ({ stream, isLocal }) => {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          borderRadius: '16px',
+          borderRadius: '14px',
           transform: isLocal ? 'scaleX(-1)' : 'none',
         }}
       />
@@ -45,8 +55,20 @@ const StreamVideo = ({ stream, isLocal }) => {
         borderRadius: '8px',
         fontSize: '0.8rem',
         fontWeight: 500,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.35rem',
       }}>
-        {isLocal ? 'You' : 'Peer'}
+        {/* Audio activity dot */}
+        {!isLocal && (
+          <span style={{
+            width: '6px', height: '6px', borderRadius: '50%',
+            background: isSpeaking ? '#3b82f6' : 'rgba(255,255,255,0.3)',
+            transition: 'background 0.2s ease',
+            flexShrink: 0,
+          }} />
+        )}
+        {label || (isLocal ? 'You' : 'Peer')}
       </div>
     </div>
   );
@@ -56,11 +78,6 @@ const VideoGrid = ({ localStream, peers }) => {
   const peerEntries = Object.entries(peers);
   const totalCount = (localStream ? 1 : 0) + peerEntries.length;
 
-  // Google Meet-style layout:
-  //  1 person  → single centered tile
-  //  2 people  → side by side
-  //  3-4       → 2x2 grid
-  //  5+        → auto-fit grid
   let gridTemplateColumns = '1fr';
   let gridTemplateRows = '1fr';
 
@@ -86,9 +103,9 @@ const VideoGrid = ({ localStream, peers }) => {
       padding: '0.5rem',
       overflow: 'hidden',
     }}>
-      {localStream && <StreamVideo stream={localStream} isLocal={true} />}
+      {localStream && <StreamVideo stream={localStream} isLocal={true} label="You" />}
       {peerEntries.map(([peerId, stream]) => (
-        <StreamVideo key={peerId} stream={stream} isLocal={false} />
+        <StreamVideo key={peerId} stream={stream} isLocal={false} label={`Peer-${peerId.substring(0, 4)}`} />
       ))}
     </div>
   );

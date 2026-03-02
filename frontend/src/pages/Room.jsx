@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, LogOut, MessageSquare, Users } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, LogOut, MessageSquare, Users, Settings, Volume2, ChevronUp } from 'lucide-react';
 import useWebRTC from '../hooks/useWebRTC';
+import useAudioLevel from '../hooks/useAudioLevel';
 import VideoGrid from '../components/VideoGrid';
 
 const Room = () => {
@@ -17,45 +18,53 @@ const Room = () => {
   // ── Device Selection ────────────────────────────────────────────────
   const [cameras, setCameras] = useState([]);
   const [mics, setMics] = useState([]);
+  const [speakers, setSpeakers] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState('');
   const [selectedMic, setSelectedMic] = useState('');
+  const [selectedSpeaker, setSelectedSpeaker] = useState('');
   const [deviceError, setDeviceError] = useState('');
 
   // ── UI State ────────────────────────────────────────────────────────
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // ── Refs ────────────────────────────────────────────────────────────
   const localVideoRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const streamRef = useRef(null); // keeps a stable reference to the live stream
+  const streamRef = useRef(null);
+  const settingsRef = useRef(null);
 
-  // ── WebRTC (only active after joining) ──────────────────────────────
+  // ── WebRTC ──────────────────────────────────────────────────────────
   const { peers, messages, sendMessage } = useWebRTC(joined ? id : null, localStream);
+
+  // ── Audio level for local mic indicator ─────────────────────────────
+  const localAudioLevel = useAudioLevel(localStream, isMicOn);
+
+  // ── Enumerate devices ──────────────────────────────────────────────
+  const enumerateDevices = async () => {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    setCameras(all.filter(d => d.kind === 'videoinput'));
+    setMics(all.filter(d => d.kind === 'audioinput'));
+    setSpeakers(all.filter(d => d.kind === 'audiooutput'));
+  };
 
   // ── 1. On mount: get permissions & enumerate devices ──────────────
   useEffect(() => {
     let alive = true;
     const init = async () => {
       try {
-        // Get a temp stream to unlock device labels
         const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (!alive) { tmp.getTracks().forEach(t => t.stop()); return; }
 
+        await enumerateDevices();
         const all = await navigator.mediaDevices.enumerateDevices();
         const vids = all.filter(d => d.kind === 'videoinput');
         const auds = all.filter(d => d.kind === 'audioinput');
 
-        setCameras(vids);
-        setMics(auds);
+        setSelectedCamera(vids[0]?.deviceId || '');
+        setSelectedMic(auds[0]?.deviceId || '');
 
-        const camId = vids[0]?.deviceId || '';
-        const micId = auds[0]?.deviceId || '';
-        setSelectedCamera(camId);
-        setSelectedMic(micId);
-
-        // Don't stop the temp stream — use it as the initial stream
-        // This avoids re-requesting permissions on mobile
         streamRef.current = tmp;
         setLocalStream(tmp);
       } catch (err) {
@@ -76,11 +85,9 @@ const Room = () => {
   }, []);
 
   // ── 2. Switch stream when device selection changes ────────────────
-  // (skipped on first mount since effect #1 already set the stream)
   const initialDeviceSet = useRef(false);
   useEffect(() => {
     if (!selectedCamera && !selectedMic) return;
-    // Skip the first trigger — effect #1 already created the stream
     if (!initialDeviceSet.current) {
       initialDeviceSet.current = true;
       return;
@@ -88,13 +95,12 @@ const Room = () => {
     let alive = true;
 
     const open = async () => {
-      // Try exact device IDs first, fall back to basic constraints (important for mobile)
       const tryConstraints = [
         {
           video: selectedCamera ? { deviceId: { exact: selectedCamera } } : true,
           audio: selectedMic ? { deviceId: { exact: selectedMic } } : true,
         },
-        { video: true, audio: true },  // fallback
+        { video: true, audio: true },
       ];
 
       for (const constraints of tryConstraints) {
@@ -107,19 +113,19 @@ const Room = () => {
           streamRef.current = stream;
           setLocalStream(stream);
           setDeviceError('');
-          return; // success
+          return;
         } catch (err) {
-          console.warn('getUserMedia failed with constraints:', constraints, err);
+          console.warn('getUserMedia failed:', err);
         }
       }
-      setDeviceError('Could not switch camera/mic. Using previous device.');
+      setDeviceError('Could not switch camera/mic.');
     };
 
     open();
     return () => { alive = false; };
   }, [selectedCamera, selectedMic]);
 
-  // ── 3. Bind local stream to the preview video element ────────────
+  // ── 3. Bind local stream to preview video ─────────────────────────
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
@@ -131,7 +137,7 @@ const Room = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // ── 5. Sync mic/video mute state to tracks ────────────────────────
+  // ── 5. Sync mic/video mute state ──────────────────────────────────
   useEffect(() => {
     if (!localStream) return;
     localStream.getAudioTracks().forEach(t => { t.enabled = isMicOn; });
@@ -141,19 +147,46 @@ const Room = () => {
   // ── 6. Cleanup on unmount ─────────────────────────────────────────
   useEffect(() => {
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-      }
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 
+  // ── 7. Close settings panel on outside click ──────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
+        setIsSettingsOpen(false);
+      }
+    };
+    if (isSettingsOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isSettingsOpen]);
+
+  // ── 8. Set speaker output (setSinkId) ─────────────────────────────
+  useEffect(() => {
+    if (!selectedSpeaker) return;
+    // setSinkId is available on video/audio elements
+    document.querySelectorAll('video, audio').forEach(el => {
+      if (el.setSinkId) {
+        el.setSinkId(selectedSpeaker).catch(() => {});
+      }
+    });
+  }, [selectedSpeaker, peers]);
+
   const toggleMic = () => setIsMicOn(p => !p);
   const toggleVideo = () => setIsVideoOn(p => !p);
-
   const handleLeave = () => {
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     navigate('/');
   };
+
+  // ── Shared device selector style ──────────────────────────────────
+  const selectStyle = {
+    padding: '0.45rem 0.6rem', fontSize: '0.85rem', width: '100%',
+    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: '8px', color: '#fff', outline: 'none',
+  };
+  const optionStyle = { background: '#1a1a1b' };
 
   // ── PRE-JOIN SCREEN ───────────────────────────────────────────────
   if (!joined) {
@@ -176,7 +209,7 @@ const Room = () => {
           padding: '2rem', display: 'flex', gap: '2.5rem',
           flexWrap: 'wrap', justifyContent: 'center', maxWidth: '900px', width: '100%'
         }}>
-          {/* ── Video Preview ── */}
+          {/* Video Preview */}
           <div style={{
             position: 'relative', width: '460px', height: '260px',
             background: '#000', borderRadius: '16px', overflow: 'hidden', flexShrink: 0
@@ -193,7 +226,23 @@ const Room = () => {
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Camera is off</span>
               </div>
             )}
-            {/* Quick toggle buttons on the preview */}
+
+            {/* Audio level bar on preview */}
+            {isMicOn && (
+              <div style={{
+                position: 'absolute', bottom: '3.5rem', left: '50%', transform: 'translateX(-50%)',
+                width: '120px', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  height: '100%', width: `${localAudioLevel * 100}%`,
+                  background: 'linear-gradient(90deg, #3b82f6, #60a5fa)',
+                  borderRadius: '2px', transition: 'width 0.1s ease',
+                }} />
+              </div>
+            )}
+
+            {/* Toggle buttons */}
             <div style={{
               position: 'absolute', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
               display: 'flex', gap: '0.75rem'
@@ -211,14 +260,14 @@ const Room = () => {
             </div>
           </div>
 
-          {/* ── Settings & Join ── */}
+          {/* Settings & Join */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', justifyContent: 'center', minWidth: '220px', flex: 1 }}>
             <div>
               <h2 style={{ marginBottom: '0.25rem' }}>Room</h2>
               <code style={{ color: 'var(--accent)', fontSize: '1.1rem', letterSpacing: '0.05em' }}>{id}</code>
             </div>
 
-            {/* Horizontal device selectors */}
+            {/* Device selectors */}
             <div style={{ display: 'flex', gap: '1rem' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', flex: 1 }}>
                 <label style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: 500 }}>Camera</label>
@@ -226,7 +275,7 @@ const Room = () => {
                   onChange={e => setSelectedCamera(e.target.value)}
                   style={{ padding: '0.45rem 0.6rem', fontSize: '0.9rem' }}>
                   {cameras.map(c => (
-                    <option key={c.deviceId} value={c.deviceId} style={{ background: '#0a0a0b' }}>
+                    <option key={c.deviceId} value={c.deviceId} style={optionStyle}>
                       {c.label || `Camera ${c.deviceId.slice(0, 6)}`}
                     </option>
                   ))}
@@ -238,17 +287,15 @@ const Room = () => {
                   onChange={e => setSelectedMic(e.target.value)}
                   style={{ padding: '0.45rem 0.6rem', fontSize: '0.9rem' }}>
                   {mics.map(m => (
-                    <option key={m.deviceId} value={m.deviceId} style={{ background: '#0a0a0b' }}>
-                      {m.label || `Microphone ${m.deviceId.slice(0, 6)}`}
+                    <option key={m.deviceId} value={m.deviceId} style={optionStyle}>
+                      {m.label || `Mic ${m.deviceId.slice(0, 6)}`}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            <button
-              onClick={() => setJoined(true)}
-              disabled={!localStream}
+            <button onClick={() => setJoined(true)} disabled={!localStream}
               className="btn btn-primary"
               style={{ padding: '0.9rem 2rem', fontSize: '1.1rem', borderRadius: '9999px' }}>
               {localStream ? 'Join Now' : 'Opening camera…'}
@@ -279,19 +326,14 @@ const Room = () => {
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>| {id}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{
-            display: 'flex', alignItems: 'center', gap: '0.4rem',
-            fontSize: '0.85rem', color: 'var(--text-secondary)'
-          }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
             <Users size={16} /> {1 + peerCount} in call
           </span>
         </div>
       </header>
 
-      {/* Main content: video grid + optional chat sidebar */}
+      {/* Main content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-
-        {/* Video grid */}
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           <VideoGrid localStream={localStream} peers={peers} />
         </main>
@@ -305,8 +347,6 @@ const Room = () => {
             <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border-glass)', flexShrink: 0 }}>
               <h3 style={{ margin: 0, fontSize: '1rem' }}>In-call messages</h3>
             </div>
-
-            {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {messages.length === 0 && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', textAlign: 'center', marginTop: '2rem' }}>
@@ -315,8 +355,7 @@ const Room = () => {
               )}
               {messages.map(msg => (
                 <div key={msg.id} style={{
-                  alignSelf: msg.isLocal ? 'flex-end' : 'flex-start',
-                  maxWidth: '88%',
+                  alignSelf: msg.isLocal ? 'flex-end' : 'flex-start', maxWidth: '88%',
                   background: msg.isLocal ? 'var(--accent)' : 'rgba(255,255,255,0.07)',
                   padding: '0.6rem 0.9rem',
                   borderRadius: msg.isLocal ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
@@ -334,21 +373,13 @@ const Room = () => {
               ))}
               <div ref={messagesEndRef} />
             </div>
-
-            {/* Input */}
             <form
               onSubmit={e => { e.preventDefault(); if (chatInput.trim()) { sendMessage(chatInput.trim()); setChatInput(''); } }}
               style={{ padding: '0.75rem 1rem', borderTop: '1px solid var(--border-glass)', display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-              <input
-                type="text"
-                className="input-glass"
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                placeholder="Send a message…"
-                style={{ padding: '0.6rem 0.9rem', flex: 1, borderRadius: '9999px', fontSize: '0.9rem' }}
-              />
-              <button type="submit" className="btn btn-primary"
-                style={{ borderRadius: '9999px', padding: '0.6rem 1rem', fontSize: '0.85rem' }}>
+              <input type="text" className="input-glass" value={chatInput}
+                onChange={e => setChatInput(e.target.value)} placeholder="Send a message…"
+                style={{ padding: '0.6rem 0.9rem', flex: 1, borderRadius: '9999px', fontSize: '0.9rem' }} />
+              <button type="submit" className="btn btn-primary" style={{ borderRadius: '9999px', padding: '0.6rem 1rem', fontSize: '0.85rem' }}>
                 Send
               </button>
             </form>
@@ -358,16 +389,30 @@ const Room = () => {
 
       {/* Controls footer */}
       <footer style={{
-        padding: '1rem 2rem', borderTop: '1px solid var(--border-glass)',
-        display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'center',
-        background: 'rgba(10,10,11,0.95)', backdropFilter: 'blur(10px)', flexShrink: 0
+        padding: '0.75rem 2rem', borderTop: '1px solid var(--border-glass)',
+        display: 'flex', justifyContent: 'center', gap: '0.5rem', alignItems: 'center',
+        background: 'rgba(10,10,11,0.95)', backdropFilter: 'blur(10px)', flexShrink: 0,
+        position: 'relative',
       }}>
-        <button onClick={toggleMic}
-          className={`btn ${isMicOn ? 'btn-secondary' : 'btn-danger'}`}
-          title={isMicOn ? 'Mute' : 'Unmute'}
-          style={{ borderRadius: '9999px', padding: '0.9rem' }}>
-          {isMicOn ? <Mic size={22} /> : <MicOff size={22} />}
-        </button>
+
+        {/* ── Mic button with audio level ring ── */}
+        <div style={{ position: 'relative' }}>
+          {/* Audio level ring behind the button */}
+          {isMicOn && (
+            <div style={{
+              position: 'absolute', inset: '-3px', borderRadius: '9999px',
+              border: `2px solid rgba(59, 130, 246, ${localAudioLevel > 0.1 ? 0.3 + localAudioLevel * 0.7 : 0})`,
+              transition: 'border-color 0.15s ease',
+              pointerEvents: 'none',
+            }} />
+          )}
+          <button onClick={toggleMic}
+            className={`btn ${isMicOn ? 'btn-secondary' : 'btn-danger'}`}
+            title={isMicOn ? 'Mute' : 'Unmute'}
+            style={{ borderRadius: '9999px', padding: '0.9rem' }}>
+            {isMicOn ? <Mic size={22} /> : <MicOff size={22} />}
+          </button>
+        </div>
 
         <button onClick={toggleVideo}
           className={`btn ${isVideoOn ? 'btn-secondary' : 'btn-danger'}`}
@@ -389,11 +434,92 @@ const Room = () => {
           )}
         </button>
 
+        {/* ── Settings button ── */}
+        <div style={{ position: 'relative' }} ref={settingsRef}>
+          <button onClick={() => { enumerateDevices(); setIsSettingsOpen(s => !s); }}
+            className={`btn ${isSettingsOpen ? 'btn-primary' : 'btn-secondary'}`}
+            title="Audio & Video Settings"
+            style={{ borderRadius: '9999px', padding: '0.9rem' }}>
+            <Settings size={22} />
+          </button>
+
+          {/* ── Settings popup ── */}
+          {isSettingsOpen && (
+            <div style={{
+              position: 'absolute', bottom: '60px', left: '50%', transform: 'translateX(-50%)',
+              width: '320px', background: 'rgba(20,20,22,0.98)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '16px', padding: '1.25rem', backdropFilter: 'blur(20px)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.5)', zIndex: 100,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h4 style={{ margin: 0, fontSize: '0.95rem' }}>Device Settings</h4>
+                <ChevronUp size={16} style={{ opacity: 0.5 }} />
+              </div>
+
+              {/* Camera */}
+              <div style={{ marginBottom: '0.9rem' }}>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.35rem' }}>
+                  <VideoIcon size={13} /> Camera
+                </label>
+                <select value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)} style={selectStyle}>
+                  {cameras.map(c => (
+                    <option key={c.deviceId} value={c.deviceId} style={optionStyle}>
+                      {c.label || `Camera ${c.deviceId.slice(0, 6)}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Microphone */}
+              <div style={{ marginBottom: '0.9rem' }}>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.35rem' }}>
+                  <Mic size={13} /> Microphone
+                </label>
+                <select value={selectedMic} onChange={e => setSelectedMic(e.target.value)} style={selectStyle}>
+                  {mics.map(m => (
+                    <option key={m.deviceId} value={m.deviceId} style={optionStyle}>
+                      {m.label || `Mic ${m.deviceId.slice(0, 6)}`}
+                    </option>
+                  ))}
+                </select>
+                {/* Mic level bar */}
+                {isMicOn && (
+                  <div style={{ marginTop: '0.5rem', height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '2px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', width: `${localAudioLevel * 100}%`,
+                      background: 'linear-gradient(90deg, #22c55e, #4ade80)',
+                      borderRadius: '2px', transition: 'width 0.1s ease',
+                    }} />
+                  </div>
+                )}
+              </div>
+
+              {/* Speaker (output) */}
+              <div>
+                <label style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.35rem' }}>
+                  <Volume2 size={13} /> Speaker
+                </label>
+                {speakers.length > 0 ? (
+                  <select value={selectedSpeaker} onChange={e => setSelectedSpeaker(e.target.value)} style={selectStyle}>
+                    {speakers.map(s => (
+                      <option key={s.deviceId} value={s.deviceId} style={optionStyle}>
+                        {s.label || `Speaker ${s.deviceId.slice(0, 6)}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Speaker selection not supported in this browser
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div style={{ width: '1px', height: '36px', background: 'var(--border-glass)', margin: '0 0.5rem' }} />
 
-        <button onClick={handleLeave}
-          className="btn btn-danger"
-          title="Leave call"
+        <button onClick={handleLeave} className="btn btn-danger" title="Leave call"
           style={{ borderRadius: '9999px', padding: '0.9rem', minWidth: '52px' }}>
           <LogOut size={22} />
         </button>
