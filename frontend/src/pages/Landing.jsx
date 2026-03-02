@@ -1,82 +1,170 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Keyboard, Plus } from 'lucide-react';
+import { Terminal, Zap, Grid3X3, Calendar } from 'lucide-react';
 
 const Landing = () => {
-  const [roomId, setRoomId] = useState('');
   const navigate = useNavigate();
+  const [joinCode, setJoinCode] = useState('');
+  const [clock, setClock] = useState('');
 
-  const handleCreateRoom = () => {
-    // Generate a random 9-character room ID (e.g. abc-def-ghi)
-    const generateId = () => Math.random().toString(36).substring(2, 5) + '-' + 
-                           Math.random().toString(36).substring(2, 5) + '-' + 
-                           Math.random().toString(36).substring(2, 5);
-    navigate(`/room/${generateId()}`);
+  // Live clock
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      setClock(now.toLocaleTimeString('en-US', { hour12: false }));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const createNewRoom = () => {
+    const id = Math.random().toString(36).substring(2, 5) + '-' +
+               Math.random().toString(36).substring(2, 5) + '-' +
+               Math.random().toString(36).substring(2, 5);
+    navigate(`/room/${id}`);
   };
 
-  const handleJoinRoom = (e) => {
-    e.preventDefault();
-    if (roomId.trim().length > 0) {
-      navigate(`/room/${roomId.trim()}`);
-    }
+  const joinRoom = () => {
+    if (joinCode.trim()) navigate(`/room/${joinCode.trim()}`);
   };
 
   return (
-    <div className="landing-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', padding: '2rem' }}>
-      <div className="glass-panel" style={{ maxWidth: '48rem', width: '100%', padding: '3rem', display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        
-        <div style={{ textAlign: 'center', marginBottom: '1rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={{ background: 'var(--accent)', padding: '1rem', borderRadius: 'var(--radius-lg)' }}>
-              <Video size={32} color="white" />
-            </div>
-            <h1 style={{ fontSize: '2.5rem' }}>Meet++</h1>
-          </div>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '1.25rem' }}>
-            Premium, secure video conferencing for everyone.
+    <div className="grid-bg" style={{ minHeight: '100vh', position: 'relative' }}>
+      <div className="ambient-glow" />
+
+      {/* ── System Status Bar ── */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '0.6rem 1.5rem', borderBottom: '1px solid var(--border-neon)',
+        background: 'rgba(0,0,0,0.4)', fontSize: '0.72rem', color: 'var(--text-dim)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span className="pulse-dot" />
+          <span style={{ color: 'var(--neon-green)', fontWeight: 600 }}>SYSTEM ONLINE</span>
+        </div>
+        <div style={{ display: 'flex', gap: '1.5rem' }}>
+          <span>PROTOCOL: <span style={{ color: 'var(--neon-cyan)' }}>WebRTC_v3</span></span>
+          <span>UPTIME: <span style={{ color: 'var(--neon-cyan)' }}>{clock}</span></span>
+        </div>
+      </div>
+
+      {/* ── Main content ── */}
+      <div style={{
+        maxWidth: '1100px', margin: '0 auto', padding: '3rem 1.5rem',
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3rem',
+      }}>
+
+        {/* ── Hero ── */}
+        <div style={{ textAlign: 'center', maxWidth: '700px' }}>
+          <h1 style={{
+            fontSize: 'clamp(1.6rem, 4vw, 2.5rem)', marginBottom: '0.75rem',
+            fontWeight: 700,
+          }}>
+            <span style={{ color: 'var(--text-dim)' }}>&lt;</span>
+            <span style={{ color: 'var(--neon-cyan)' }}>VideoCalls</span>
+            <span style={{ color: 'var(--text-dim)' }}> mode=</span>
+            <span style={{ color: 'var(--neon-green)' }}>"premium"</span>
+            <span style={{ color: 'var(--text-dim)' }}> /&gt;</span>
+          </h1>
+          <p style={{ color: 'var(--text-comment)', fontSize: '0.88rem', lineHeight: 1.7 }}>
+            <span style={{ color: 'var(--text-dim)' }}>// </span>
+            Optimized for developers. We re-engineered the kernel for high-fidelity
+            peer-to-peer communication. Now open-source for everyone.
           </p>
         </div>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2rem', justifyContent: 'space-between', marginTop: '1rem' }}>
-          
-          {/* Create Room Section */}
-          <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-glass)' }}>
-            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Start a meeting</h2>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Create a new secure room instantly and invite others to join.
-            </p>
-            <button onClick={handleCreateRoom} className="btn btn-primary" style={{ width: '100%', padding: '1rem' }}>
-              <Plus size={20} />
-              New Meeting
+        {/* ── Action Panel ── */}
+        <div className="neon-panel" style={{
+          padding: '2rem', width: '100%', maxWidth: '560px',
+          display: 'flex', flexDirection: 'column', gap: '1rem',
+          position: 'relative', zIndex: 1,
+        }}>
+          <button onClick={createNewRoom} className="btn btn-primary"
+            style={{ width: '100%', padding: '0.85rem', fontSize: '0.9rem', borderRadius: 'var(--radius-sm)' }}>
+            <Terminal size={16} /> init_meeting()
+          </button>
+
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.5rem',
+            color: 'var(--text-dim)', fontSize: '0.75rem',
+          }}>
+            <div style={{ flex: 1, height: '1px', background: 'var(--border-neon)' }} />
+            <span>OR ENTER ACCESS TOKEN</span>
+            <div style={{ flex: 1, height: '1px', background: 'var(--border-neon)' }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input
+              type="text"
+              className="input-glass"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              placeholder="xxx-xxx-xxx"
+              onKeyDown={(e) => e.key === 'Enter' && joinRoom()}
+              style={{ flex: 1 }}
+            />
+            <button onClick={joinRoom} className="btn btn-secondary"
+              disabled={!joinCode.trim()}
+              style={{ whiteSpace: 'nowrap' }}>
+              join()
             </button>
           </div>
-
-          {/* Join Room Section */}
-          <div style={{ flex: '1 1 300px', display: 'flex', flexDirection: 'column', gap: '1rem', padding: '2rem', background: 'rgba(255,255,255,0.02)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-glass)' }}>
-            <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Join a meeting</h2>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              Got an invite? Enter the meeting code below to join in.
-            </p>
-            <form onSubmit={handleJoinRoom} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ position: 'relative' }}>
-                <Keyboard size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
-                <input 
-                  type="text" 
-                  className="input-glass" 
-                  placeholder="Enter a code or link" 
-                  value={roomId}
-                  onChange={(e) => setRoomId(e.target.value)}
-                  style={{ paddingLeft: '3rem' }}
-                />
-              </div>
-              <button disabled={!roomId.trim()} type="submit" className="btn btn-secondary" style={{ width: '100%', padding: '1rem' }}>
-                Join
-              </button>
-            </form>
-          </div>
-
         </div>
 
+        {/* ── Feature Grid ── */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: '1rem', width: '100%', maxWidth: '900px',
+        }}>
+          {/* Feature 1 */}
+          <div className="neon-panel" style={{ padding: '1.5rem', position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem' }}>
+              <Zap size={16} style={{ color: 'var(--neon-cyan)' }} />
+              <h3 style={{ fontSize: '0.9rem', color: 'var(--neon-cyan)' }}>&gt; Generate_Link()</h3>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Execute <span style={{ color: 'var(--neon-green)' }}>init_meeting()</span> to
+              generate a shareable URL token. No dependency installation required.
+            </p>
+          </div>
+
+          {/* Feature 2 */}
+          <div className="neon-panel" style={{ padding: '1.5rem', position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem' }}>
+              <Grid3X3 size={16} style={{ color: 'var(--neon-cyan)' }} />
+              <h3 style={{ fontSize: '0.9rem', color: 'var(--neon-cyan)' }}>&gt; View.Grid(49)</h3>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Render up to <span style={{ color: 'var(--neon-green)' }}>49 peers</span> simultaneously.
+              Toggle layout modes via the config panel.
+            </p>
+          </div>
+
+          {/* Feature 3 */}
+          <div className="neon-panel" style={{ padding: '1.5rem', position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem' }}>
+              <Calendar size={16} style={{ color: 'var(--neon-cyan)' }} />
+              <h3 style={{ fontSize: '0.9rem', color: 'var(--neon-cyan)' }}>&gt; Cron.Schedule()</h3>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              Integrate with <span style={{ color: 'var(--neon-green)' }}>Calendar API</span> to
+              schedule syncs. Automate invite dispatch to all team members.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <div style={{
+          display: 'flex', gap: '1.5rem', fontSize: '0.72rem', color: 'var(--text-dim)',
+          flexWrap: 'wrap', justifyContent: 'center', paddingTop: '1rem',
+          borderTop: '1px solid var(--border-glass)', width: '100%', maxWidth: '500px',
+        }}>
+          <span style={{ cursor: 'pointer' }}>./privacy.md</span>
+          <span style={{ cursor: 'pointer' }}>./terms.txt</span>
+          <span style={{ cursor: 'pointer' }}>./about.json</span>
+          <span style={{ color: 'var(--text-dim)' }}>v1.2.a_build</span>
+        </div>
       </div>
     </div>
   );

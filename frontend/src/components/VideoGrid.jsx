@@ -13,58 +13,83 @@ const StreamVideo = ({ stream, isLocal, label, isPinned, onPin, compact }) => {
 
   const isSpeaking = audioLevel > 0.15;
   const borderColor = isSpeaking
-    ? `rgba(59,130,246,${0.5 + audioLevel * 0.5})`
-    : isPinned ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.06)';
+    ? `rgba(0,240,255,${0.4 + audioLevel * 0.6})`
+    : isPinned ? 'rgba(0,240,255,0.3)' : 'rgba(255,255,255,0.04)';
 
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%', overflow: 'hidden',
-      background: '#111', borderRadius: compact ? '10px' : '14px',
-      border: `2px solid ${borderColor}`, transition: 'border-color 0.2s',
-      boxShadow: isSpeaking ? '0 0 14px rgba(59,130,246,0.25)' : 'none',
+      background: '#08080e', borderRadius: compact ? '8px' : '10px',
+      border: `1px solid ${borderColor}`, transition: 'border-color 0.2s, box-shadow 0.2s',
+      boxShadow: isSpeaking ? '0 0 20px rgba(0,240,255,0.2)' : 'none',
       minHeight: 0,
     }}>
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
         style={{
           width: '100%', height: '100%', objectFit: 'cover',
-          borderRadius: compact ? '8px' : '12px',
+          borderRadius: compact ? '7px' : '9px',
           transform: isLocal ? 'scaleX(-1)' : 'none',
         }}
       />
 
-      {/* Label + speaking dot */}
+      {/* Scanline overlay */}
+      <div className="scanline-overlay" />
+
+      {/* Label bar */}
       <div style={{
-        position: 'absolute', bottom: compact ? '0.4rem' : '0.6rem',
-        left: compact ? '0.4rem' : '0.6rem',
-        background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
-        padding: compact ? '0.1rem 0.4rem' : '0.12rem 0.5rem',
-        borderRadius: '6px', fontSize: compact ? '0.7rem' : '0.78rem',
-        fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.3rem',
+        position: 'absolute', bottom: compact ? '0.3rem' : '0.5rem',
+        left: compact ? '0.3rem' : '0.5rem', right: compact ? '0.3rem' : '0.5rem',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
-        {!isLocal && (
-          <span style={{
-            width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
-            background: isSpeaking ? '#3b82f6' : 'rgba(255,255,255,0.3)',
-            transition: 'background 0.2s',
-          }} />
+        <div style={{
+          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+          padding: compact ? '0.1rem 0.4rem' : '0.15rem 0.5rem',
+          borderRadius: '4px', fontSize: compact ? '0.65rem' : '0.72rem',
+          fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.3rem',
+          fontFamily: 'var(--font-mono)',
+        }}>
+          {!isLocal && (
+            <span style={{
+              width: '5px', height: '5px', borderRadius: '50%', flexShrink: 0,
+              background: isSpeaking ? 'var(--neon-cyan)' : 'rgba(255,255,255,0.2)',
+              transition: 'background 0.2s',
+              boxShadow: isSpeaking ? '0 0 6px var(--neon-cyan)' : 'none',
+            }} />
+          )}
+          <span style={{ color: 'var(--text-dim)' }}>usr:</span> {label}
+        </div>
+
+        {/* Audio level mini-bar */}
+        {!isLocal && !compact && (
+          <div style={{
+            background: 'rgba(0,0,0,0.6)', borderRadius: '4px', padding: '0.15rem 0.35rem',
+            display: 'flex', alignItems: 'center', gap: '2px', height: '14px',
+          }}>
+            {[0.1, 0.25, 0.4, 0.55, 0.7].map((threshold, i) => (
+              <div key={i} style={{
+                width: '3px', height: `${6 + i * 2}px`, borderRadius: '1px',
+                background: audioLevel > threshold ? 'var(--neon-cyan)' : 'rgba(255,255,255,0.1)',
+                transition: 'background 0.15s',
+              }} />
+            ))}
+          </div>
         )}
-        {label || (isLocal ? 'You' : 'Peer')}
       </div>
 
       {/* Pin button */}
       {onPin && (
         <button onClick={(e) => { e.stopPropagation(); onPin(); }}
+          className="pin-btn"
           style={{
-            position: 'absolute', top: compact ? '0.3rem' : '0.5rem',
-            right: compact ? '0.3rem' : '0.5rem',
-            background: isPinned ? 'rgba(59,130,246,0.6)' : 'rgba(0,0,0,0.5)',
-            border: 'none', borderRadius: '8px', padding: compact ? '0.25rem' : '0.35rem',
-            cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center',
-            backdropFilter: 'blur(4px)', opacity: isPinned ? 1 : 0,
-            transition: 'opacity 0.2s',
-          }}
-          className="pin-btn">
-          {isPinned ? <PinOff size={compact ? 12 : 14} /> : <Pin size={compact ? 12 : 14} />}
+            position: 'absolute', top: compact ? '0.25rem' : '0.4rem',
+            right: compact ? '0.25rem' : '0.4rem',
+            background: isPinned ? 'rgba(0,240,255,0.5)' : 'rgba(0,0,0,0.6)',
+            border: '1px solid rgba(0,240,255,0.2)', borderRadius: '4px',
+            padding: compact ? '0.2rem' : '0.3rem',
+            cursor: 'pointer', color: '#fff', display: 'flex',
+            backdropFilter: 'blur(4px)',
+          }}>
+          {isPinned ? <PinOff size={compact ? 11 : 13} /> : <Pin size={compact ? 11 : 13} />}
         </button>
       )}
     </div>
@@ -83,55 +108,40 @@ const VideoGrid = ({ localStream, peers }) => {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
-  // Build participant list: local + peers
   const allParticipants = [];
   if (localStream) allParticipants.push({ id: '__local__', stream: localStream, isLocal: true, label: 'You' });
   Object.entries(peers).forEach(([id, stream]) => {
-    allParticipants.push({ id, stream, isLocal: false, label: `Peer-${id.substring(0, 4)}` });
+    allParticipants.push({ id, stream, isLocal: false, label: id.substring(0, 6) });
   });
 
-  // Clean up pin if pinned participant left
   const pinned = pinnedId ? allParticipants.find(p => p.id === pinnedId) : null;
-
   const togglePin = (id) => setPinnedId(prev => prev === id ? null : id);
-
   const TILES_PER_PAGE = 4;
   const totalPages = Math.ceil(allParticipants.length / TILES_PER_PAGE);
 
-  // Reset page if it's out of bounds
   useEffect(() => {
     if (page >= totalPages && totalPages > 0) setPage(totalPages - 1);
   }, [totalPages, page]);
 
-  // ── PINNED / SPOTLIGHT MODE ────────────────────────────────────────
+  // ── PINNED / SPOTLIGHT ──────────────────────────────────────────────
   if (pinned) {
     const others = allParticipants.filter(p => p.id !== pinnedId);
     return (
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: '0.4rem', gap: '0.4rem', overflow: 'hidden' }}>
-        {/* Spotlight */}
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: '0.3rem', gap: '0.3rem', overflow: 'hidden' }}>
         <div style={{ flex: 1, minHeight: 0 }}>
-          <StreamVideo
-            stream={pinned.stream} isLocal={pinned.isLocal} label={pinned.label}
-            isPinned onPin={() => togglePin(pinned.id)}
-          />
+          <StreamVideo stream={pinned.stream} isLocal={pinned.isLocal} label={pinned.label}
+            isPinned onPin={() => togglePin(pinned.id)} />
         </div>
-
-        {/* Filmstrip of others */}
         {others.length > 0 && (
           <div style={{
-            display: 'flex', gap: '0.35rem', height: isMobile ? '80px' : '120px',
+            display: 'flex', gap: '0.3rem', height: isMobile ? '75px' : '110px',
             overflowX: 'auto', overflowY: 'hidden', flexShrink: 0,
-            scrollSnapType: 'x mandatory', paddingBottom: '2px',
+            scrollSnapType: 'x mandatory',
           }}>
             {others.map(p => (
-              <div key={p.id} style={{
-                flex: `0 0 ${isMobile ? '110px' : '170px'}`, height: '100%',
-                scrollSnapAlign: 'start',
-              }}>
-                <StreamVideo
-                  stream={p.stream} isLocal={p.isLocal} label={p.label}
-                  isPinned={false} onPin={() => togglePin(p.id)} compact
-                />
+              <div key={p.id} style={{ flex: `0 0 ${isMobile ? '100px' : '160px'}`, height: '100%', scrollSnapAlign: 'start' }}>
+                <StreamVideo stream={p.stream} isLocal={p.isLocal} label={p.label}
+                  isPinned={false} onPin={() => togglePin(p.id)} compact />
               </div>
             ))}
           </div>
@@ -140,72 +150,39 @@ const VideoGrid = ({ localStream, peers }) => {
     );
   }
 
-  // ── PAGINATED GRID MODE ────────────────────────────────────────────
-  const visibleParticipants = allParticipants.slice(page * TILES_PER_PAGE, (page + 1) * TILES_PER_PAGE);
-  const count = visibleParticipants.length;
-
-  // Grid layout for current visible page
-  let cols = '1fr';
-  let rows = '1fr';
-  if (count === 2) { cols = isMobile ? '1fr' : 'repeat(2, 1fr)'; rows = isMobile ? 'repeat(2, 1fr)' : '1fr'; }
-  else if (count >= 3) { cols = 'repeat(2, 1fr)'; rows = 'repeat(2, 1fr)'; }
+  // ── PAGINATED GRID ──────────────────────────────────────────────────
+  const visible = allParticipants.slice(page * TILES_PER_PAGE, (page + 1) * TILES_PER_PAGE);
+  const count = visible.length;
+  let cols = '1fr', rows = '1fr';
+  if (count === 2) { cols = isMobile ? '1fr' : 'repeat(2,1fr)'; rows = isMobile ? 'repeat(2,1fr)' : '1fr'; }
+  else if (count >= 3) { cols = 'repeat(2,1fr)'; rows = 'repeat(2,1fr)'; }
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: '0.4rem', gap: '0.3rem', overflow: 'hidden' }}>
-
-      {/* Video grid */}
-      <div style={{
-        flex: 1, minHeight: 0, display: 'grid', gap: isMobile ? '0.3rem' : '0.5rem',
-        gridTemplateColumns: cols, gridTemplateRows: rows,
-      }}>
-        {visibleParticipants.map(p => (
-          <StreamVideo
-            key={p.id} stream={p.stream} isLocal={p.isLocal} label={p.label}
-            isPinned={false} onPin={() => togglePin(p.id)} compact={isMobile}
-          />
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', padding: '0.3rem', gap: '0.25rem', overflow: 'hidden' }}>
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', gap: isMobile ? '0.25rem' : '0.4rem', gridTemplateColumns: cols, gridTemplateRows: rows }}>
+        {visible.map(p => (
+          <StreamVideo key={p.id} stream={p.stream} isLocal={p.isLocal} label={p.label}
+            isPinned={false} onPin={() => togglePin(p.id)} compact={isMobile} />
         ))}
       </div>
-
-      {/* Pagination controls */}
       {totalPages > 1 && (
-        <div style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center',
-          gap: '0.75rem', padding: '0.3rem 0', flexShrink: 0,
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.6rem', padding: '0.2rem 0', flexShrink: 0 }}>
           <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-            style={{
-              background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '50%',
-              padding: '0.3rem', cursor: page === 0 ? 'not-allowed' : 'pointer',
-              color: '#fff', opacity: page === 0 ? 0.3 : 0.8, display: 'flex',
-            }}>
-            <ChevronLeft size={16} />
+            style={{ background: 'rgba(0,240,255,0.06)', border: '1px solid var(--border-neon)', borderRadius: '4px', padding: '0.2rem', cursor: page === 0 ? 'not-allowed' : 'pointer', color: '#fff', opacity: page === 0 ? 0.3 : 0.7, display: 'flex' }}>
+            <ChevronLeft size={14} />
           </button>
-
-          {/* Page dots */}
-          <div style={{ display: 'flex', gap: '0.35rem' }}>
+          <div style={{ display: 'flex', gap: '0.3rem' }}>
             {Array.from({ length: totalPages }, (_, i) => (
               <button key={i} onClick={() => setPage(i)}
-                style={{
-                  width: page === i ? '16px' : '6px', height: '6px', borderRadius: '3px',
-                  border: 'none', cursor: 'pointer',
-                  background: page === i ? '#3b82f6' : 'rgba(255,255,255,0.2)',
-                  transition: 'all 0.2s',
-                }}
-              />
+                style={{ width: page === i ? '14px' : '5px', height: '5px', borderRadius: '2px', border: 'none', cursor: 'pointer', background: page === i ? 'var(--neon-cyan)' : 'rgba(255,255,255,0.15)', transition: 'all 0.2s' }} />
             ))}
           </div>
-
           <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page === totalPages - 1}
-            style={{
-              background: 'rgba(255,255,255,0.06)', border: 'none', borderRadius: '50%',
-              padding: '0.3rem', cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer',
-              color: '#fff', opacity: page === totalPages - 1 ? 0.3 : 0.8, display: 'flex',
-            }}>
-            <ChevronRight size={16} />
+            style={{ background: 'rgba(0,240,255,0.06)', border: '1px solid var(--border-neon)', borderRadius: '4px', padding: '0.2rem', cursor: page === totalPages - 1 ? 'not-allowed' : 'pointer', color: '#fff', opacity: page === totalPages - 1 ? 0.3 : 0.7, display: 'flex' }}>
+            <ChevronRight size={14} />
           </button>
-
-          <span style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-            <Users size={12} /> {allParticipants.length}
+          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+            <Users size={10} /> {allParticipants.length}
           </span>
         </div>
       )}
