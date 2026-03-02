@@ -317,17 +317,17 @@ const Room = () => {
 
       {/* Header */}
       <header style={{
-        padding: '0.75rem 1.5rem', borderBottom: '1px solid var(--border-glass)',
+        padding: '0.5rem 1rem', borderBottom: '1px solid var(--border-glass)',
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         background: 'rgba(10,10,11,0.9)', backdropFilter: 'blur(10px)', flexShrink: 0
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <h3 style={{ margin: 0 }}>Meet++</h3>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>| {id}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Meet++</h3>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>| {id}</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            <Users size={16} /> {1 + peerCount} in call
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+            <Users size={14} /> {1 + peerCount}
           </span>
         </div>
       </header>
@@ -389,8 +389,8 @@ const Room = () => {
 
       {/* Controls footer */}
       <footer style={{
-        padding: '0.75rem 2rem', borderTop: '1px solid var(--border-glass)',
-        display: 'flex', justifyContent: 'center', gap: '0.5rem', alignItems: 'center',
+        padding: '0.55rem 1rem', borderTop: '1px solid var(--border-glass)',
+        display: 'flex', justifyContent: 'center', gap: '0.4rem', alignItems: 'center',
         background: 'rgba(10,10,11,0.95)', backdropFilter: 'blur(10px)', flexShrink: 0,
         position: 'relative',
       }}>
@@ -409,7 +409,7 @@ const Room = () => {
           <button onClick={toggleMic}
             className={`btn ${isMicOn ? 'btn-secondary' : 'btn-danger'}`}
             title={isMicOn ? 'Mute' : 'Unmute'}
-            style={{ borderRadius: '9999px', padding: '0.9rem' }}>
+            style={{ borderRadius: '9999px', padding: '0.7rem' }}>
             {isMicOn ? <Mic size={22} /> : <MicOff size={22} />}
           </button>
         </div>
@@ -439,7 +439,7 @@ const Room = () => {
           <button onClick={() => { enumerateDevices(); setIsSettingsOpen(s => !s); }}
             className={`btn ${isSettingsOpen ? 'btn-primary' : 'btn-secondary'}`}
             title="Audio & Video Settings"
-            style={{ borderRadius: '9999px', padding: '0.9rem' }}>
+            style={{ borderRadius: '9999px', padding: '0.7rem' }}>
             <Settings size={22} />
           </button>
 
