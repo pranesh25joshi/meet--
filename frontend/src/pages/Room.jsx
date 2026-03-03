@@ -56,46 +56,58 @@ const Room = () => {
     setSpeakers(all.filter(d => d.kind === 'audiooutput'));
   };
 
-  // ── 1. Init ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    let alive = true;
-    const init = async () => {
-      // Check if mediaDevices API is available (requires HTTPS on mobile)
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setDeviceError('HTTPS_REQUIRED: Camera/mic requires a secure (HTTPS) connection on mobile.');
+  // ── 1. Init media ────────────────────────────────────────────────────
+  const initMedia = async () => {
+    setDeviceError('');
+
+    // Check if mediaDevices API exists (missing on HTTP in mobile browsers)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setDeviceError('HTTPS_REQUIRED: This site must be loaded over HTTPS for camera/mic access on mobile. Check your URL starts with https://');
+      return;
+    }
+
+    // Try video+audio, then audio-only, then give up gracefully
+    const attempts = [
+      { video: true, audio: true },
+      { video: false, audio: true },
+    ];
+
+    for (const constraints of attempts) {
+      try {
+        const tmp = await navigator.mediaDevices.getUserMedia(constraints);
+        await enumerateDevices();
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setSelectedCamera(all.find(d => d.kind === 'videoinput')?.deviceId || '');
+        setSelectedMic(all.find(d => d.kind === 'audioinput')?.deviceId || '');
+        if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = tmp;
+        setLocalStream(tmp);
+        setDeviceError(!constraints.video ? 'WARN: Camera unavailable — audio-only mode.' : '');
         return;
+      } catch (err) {
+        console.warn('getUserMedia failed:', constraints, err.name, err.message);
       }
+    }
 
-      // Try video + audio first, then audio-only, then give up gracefully
-      const attempts = [
-        { video: true, audio: true },
-        { video: false, audio: true },  // audio-only fallback
-      ];
-
-      for (const constraints of attempts) {
-        try {
-          const tmp = await navigator.mediaDevices.getUserMedia(constraints);
-          if (!alive) { tmp.getTracks().forEach(t => t.stop()); return; }
-          await enumerateDevices();
-          const all = await navigator.mediaDevices.enumerateDevices();
-          setSelectedCamera(all.find(d => d.kind === 'videoinput')?.deviceId || '');
-          setSelectedMic(all.find(d => d.kind === 'audioinput')?.deviceId || '');
-          streamRef.current = tmp;
-          setLocalStream(tmp);
-          if (!constraints.video) {
-            setDeviceError('WARN: Camera unavailable. Audio-only mode.');
-          }
-          return; // success
-        } catch (err) {
-          console.warn('getUserMedia attempt failed:', constraints, err.name);
-        }
+    // Detect the specific issue for better messaging
+    let msg = 'BLOCKED: Camera/mic access denied.';
+    try {
+      const camPerm = await navigator.permissions.query({ name: 'camera' });
+      const micPerm = await navigator.permissions.query({ name: 'microphone' });
+      if (camPerm.state === 'denied' || micPerm.state === 'denied') {
+        msg = 'DENIED: You previously blocked camera/mic for this site. To fix:\n1. Tap the lock/info icon in the URL bar\n2. Find Camera & Microphone → set to Allow\n3. Tap the RETRY button below';
+      } else if (camPerm.state === 'prompt') {
+        msg = 'NOT_GRANTED: Browser did not show the permission prompt. Try the RETRY button below.';
       }
+    } catch (_) {
+      // permissions.query not supported (Firefox/some mobile) — use generic message
+    }
+    setDeviceError(msg);
+  };
 
-      // All attempts failed — still allow joining without media
-      setDeviceError('PERMISSION_DENIED: Camera/mic blocked. You can still join (no audio/video). Allow permissions in browser settings and reload.');
-    };
-    init();
-    return () => { alive = false; };
+  useEffect(() => {
+    initMedia();
+    return () => {};
   }, []);
 
   // ── 2. Switch devices ───────────────────────────────────────────────
@@ -198,11 +210,29 @@ const Room = () => {
             <div style={{
               position: 'fixed', top: '3.5rem', left: '50%', transform: 'translateX(-50%)',
               background: 'rgba(255,59,59,0.1)', border: '1px solid rgba(255,59,59,0.3)',
-              borderRadius: '6px', padding: '0.7rem 1.2rem', color: '#ff6b6b',
-              fontSize: '0.78rem', zIndex: 100, fontFamily: 'var(--font-mono)',
-              maxWidth: '90%',
+              borderRadius: '8px', padding: '0.8rem 1.2rem', color: '#ff6b6b',
+              fontSize: '0.75rem', zIndex: 100, fontFamily: 'var(--font-mono)',
+              maxWidth: '92%', width: '420px',
             }}>
-              ⚠ {deviceError}
+              <div style={{ whiteSpace: 'pre-line', marginBottom: '0.6rem' }}>⚠ {deviceError}</div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button onClick={initMedia}
+                  style={{
+                    background: 'rgba(0,240,255,0.15)', border: '1px solid var(--neon-cyan)',
+                    color: 'var(--neon-cyan)', borderRadius: '4px', padding: '0.35rem 0.8rem',
+                    fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                  }}>
+                  ↻ RETRY
+                </button>
+                <button onClick={() => setDeviceError('')}
+                  style={{
+                    background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                    color: 'var(--text-dim)', borderRadius: '4px', padding: '0.35rem 0.8rem',
+                    fontSize: '0.72rem', cursor: 'pointer', fontFamily: 'var(--font-mono)',
+                  }}>
+                  DISMISS
+                </button>
+              </div>
             </div>
           )}
 
