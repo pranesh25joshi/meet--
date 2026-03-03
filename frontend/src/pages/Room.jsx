@@ -60,24 +60,39 @@ const Room = () => {
   useEffect(() => {
     let alive = true;
     const init = async () => {
-      try {
-        const tmp = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (!alive) { tmp.getTracks().forEach(t => t.stop()); return; }
-        await enumerateDevices();
-        const all = await navigator.mediaDevices.enumerateDevices();
-        setSelectedCamera(all.find(d => d.kind === 'videoinput')?.deviceId || '');
-        setSelectedMic(all.find(d => d.kind === 'audioinput')?.deviceId || '');
-        streamRef.current = tmp;
-        setLocalStream(tmp);
-      } catch (err) {
-        console.error('Init:', err);
-        const msgs = {
-          NotAllowedError: 'PERMISSION_DENIED: Camera/mic access blocked. Allow in browser settings.',
-          NotFoundError: 'DEVICE_NOT_FOUND: No camera or microphone detected.',
-          NotReadableError: 'DEVICE_BUSY: Camera/mic in use by another process.',
-        };
-        setDeviceError(msgs[err.name] || `ERROR: ${err.message}`);
+      // Check if mediaDevices API is available (requires HTTPS on mobile)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setDeviceError('HTTPS_REQUIRED: Camera/mic requires a secure (HTTPS) connection on mobile.');
+        return;
       }
+
+      // Try video + audio first, then audio-only, then give up gracefully
+      const attempts = [
+        { video: true, audio: true },
+        { video: false, audio: true },  // audio-only fallback
+      ];
+
+      for (const constraints of attempts) {
+        try {
+          const tmp = await navigator.mediaDevices.getUserMedia(constraints);
+          if (!alive) { tmp.getTracks().forEach(t => t.stop()); return; }
+          await enumerateDevices();
+          const all = await navigator.mediaDevices.enumerateDevices();
+          setSelectedCamera(all.find(d => d.kind === 'videoinput')?.deviceId || '');
+          setSelectedMic(all.find(d => d.kind === 'audioinput')?.deviceId || '');
+          streamRef.current = tmp;
+          setLocalStream(tmp);
+          if (!constraints.video) {
+            setDeviceError('WARN: Camera unavailable. Audio-only mode.');
+          }
+          return; // success
+        } catch (err) {
+          console.warn('getUserMedia attempt failed:', constraints, err.name);
+        }
+      }
+
+      // All attempts failed — still allow joining without media
+      setDeviceError('PERMISSION_DENIED: Camera/mic blocked. You can still join (no audio/video). Allow permissions in browser settings and reload.');
     };
     init();
     return () => { alive = false; };
@@ -302,10 +317,10 @@ const Room = () => {
               </div>
             </div>
 
-            <button onClick={() => setJoined(true)} disabled={!localStream}
+            <button onClick={() => setJoined(true)}
               className="btn btn-primary"
               style={{ width: '100%', padding: '0.75rem', fontSize: '0.85rem', borderRadius: '6px' }}>
-              {localStream ? '--\u003e EXECUTE JOIN' : 'INITIALIZING...'}
+              --&gt; EXECUTE JOIN
             </button>
 
             <button onClick={() => navigate('/')} className="btn btn-secondary"
