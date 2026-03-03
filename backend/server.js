@@ -8,6 +8,8 @@ const app = express();
 app.use(cors());
 
 const server = http.createServer(app);
+// For production, you should restrict the origin to your frontend's URL
+// for better security, e.g., origin: 'https://your-frontend.vercel.app'
 const io = new Server(server, {
   cors: {
     origin: process.env.CORS_ORIGIN || '*',

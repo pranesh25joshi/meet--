@@ -213,7 +213,9 @@ const useWebRTC = (roomId, localStream) => {
     });
 
     // ── A NEW peer joined → we (existing user) send them an offer ─────
-    // Add a small delay to ensure the new joiner has set up their listeners
+    // This timeout is a common but fragile workaround for a race condition where
+    // the new peer might not have their `signal` event listener set up yet.
+    // A more robust solution is the "perfect negotiation" pattern.
     socket.on('user-connected', (peerId) => {
       console.log(`[WebRTC] New user: ${peerId} → sending offer in 500ms`);
       const t = setTimeout(() => sendOfferTo(peerId), 500);
