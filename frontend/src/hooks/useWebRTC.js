@@ -9,7 +9,16 @@ const ICE_SERVERS = {
   ],
 };
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
+const resolveSocketUrl = () => {
+  if (import.meta.env.VITE_SOCKET_URL) return import.meta.env.VITE_SOCKET_URL;
+  if (import.meta.env.DEV) return 'http://localhost:5001';
+  // In production, default to same-origin (useful if you later proxy Socket.IO there).
+  // If you host signaling elsewhere, set VITE_SOCKET_URL in your Vercel env vars.
+  if (typeof window !== 'undefined') return window.location.origin;
+  return '';
+};
+
+const SOCKET_URL = resolveSocketUrl();
 
 const ensureMediaTransceivers = (pc) => {
   const transceivers = pc.getTransceivers();
@@ -24,6 +33,12 @@ const ensureMediaTransceivers = (pc) => {
 const useWebRTC = (roomId, localStream) => {
   const [peers, setPeers] = useState({});
   const [messages, setMessages] = useState([]);
+  const [socketStatus, setSocketStatus] = useState('idle'); // idle | connecting | connected | error | disconnected
+  const [socketError, setSocketError] = useState('');
+  const [socketId, setSocketId] = useState('');
+  const [roomMembers, setRoomMembers] = useState([]);
+  const [hostId, setHostId] = useState(null);
+  const [lastModerationAction, setLastModerationAction] = useState(null);
 
   const socketRef = useRef(null);
   const pcsRef = useRef({});
@@ -144,6 +159,14 @@ const useWebRTC = (roomId, localStream) => {
   useEffect(() => {
     if (!roomId) return;
 
+    if (!SOCKET_URL) {
+      setSocketStatus('error');
+      setSocketError('Missing signaling URL. Set VITE_SOCKET_URL.');
+      return;
+    }
+
+    setSocketStatus('connecting');
+    setSocketError('');
     const socket = io(SOCKET_URL, { transports: ['websocket'] });
     socketRef.current = socket;
     console.log('[WebRTC] Connecting for room:', roomId);
@@ -168,7 +191,25 @@ const useWebRTC = (roomId, localStream) => {
     // ── Socket connected → join room ──────────────────────────────────
     socket.on('connect', () => {
       console.log('[WebRTC] Socket connected:', socket.id);
+      setSocketStatus('connected');
+      setSocketId(socket.id);
       socket.emit('join-room', roomId);
+    });
+
+    socket.on('connect_error', (err) => {
+      console.warn('[WebRTC] Socket connect_error:', err?.message || err);
+      setSocketStatus('error');
+      setSocketError(
+        (import.meta.env.VITE_SOCKET_URL
+          ? `Signaling connection failed: ${err?.message || 'unknown error'}`
+          : `Signaling connection failed. In production you must set VITE_SOCKET_URL to your backend (current default: ${SOCKET_URL}).`)
+      );
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.warn('[WebRTC] Socket disconnected:', reason);
+      setSocketStatus('disconnected');
+      setSocketId('');
     });
 
     // ── A NEW peer joined → we (existing user) send them an offer ─────
@@ -184,6 +225,23 @@ const useWebRTC = (roomId, localStream) => {
     socket.on('existing-peers', (peerIds) => {
       console.log(`[WebRTC] ${peerIds.length} existing peer(s):`, peerIds);
       // Don't initiate — wait for their offers
+    });
+
+    // ── Room state (members + host) ────────────────────────────────────
+    socket.on('room-state', ({ members, hostId: h }) => {
+      setRoomMembers(Array.isArray(members) ? members : []);
+      setHostId(h || null);
+    });
+
+    // ── Moderation actions (client-enforced) ───────────────────────────
+    socket.on('moderation-action', ({ from, action, roomId: rid }) => {
+      setLastModerationAction({
+        id: Math.random().toString(36).slice(2),
+        from,
+        roomId: rid || roomId,
+        action,
+        ts: Date.now(),
+      });
     });
 
     // ── Handle incoming signals ───────────────────────────────────────
@@ -261,13 +319,19 @@ const useWebRTC = (roomId, localStream) => {
       pcsRef.current = {};
       pendingCandidatesRef.current = {};
       setPeers({});
+      setSocketStatus('idle');
+      setSocketError('');
+      setSocketId('');
+      setRoomMembers([]);
+      setHostId(null);
+      setLastModerationAction(null);
     };
   }, [roomId, createPeerConnection]);
 
   // ── Send chat message ───────────────────────────────────────────────
   const sendMessage = (text) => {
     const socket = socketRef.current;
-    if (!socket) return;
+    if (!socket || !socket.connected) return;
     const msg = {
       id: Math.random().toString(36).substr(2, 9),
       text,
@@ -278,7 +342,24 @@ const useWebRTC = (roomId, localStream) => {
     setMessages((prev) => [...prev, { ...msg, senderName: 'You', isLocal: true }]);
   };
 
-  return { peers, messages, sendMessage };
+  const sendModerationAction = (to, action) => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+    socket.emit('moderation-action', { roomId, to, action });
+  };
+
+  return {
+    peers,
+    messages,
+    sendMessage,
+    socketStatus,
+    socketError,
+    socketId,
+    roomMembers,
+    hostId,
+    sendModerationAction,
+    lastModerationAction,
+  };
 };
 
 export default useWebRTC;

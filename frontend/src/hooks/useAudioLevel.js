@@ -32,6 +32,9 @@ const useAudioLevel = (stream, enabled = true) => {
       console.warn('[AudioLevel] Could not create AudioContext:', e);
       return;
     }
+    // Some browsers start AudioContext in "suspended" until a user gesture.
+    // Try to resume; if it fails we'll still just show 0 level.
+    try { ctx.resume?.(); } catch { /* noop */ }
 
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 256;

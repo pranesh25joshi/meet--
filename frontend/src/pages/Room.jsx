@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, LogOut, MessageSquare,
-  Users, Settings, Volume2, ChevronUp, Monitor, Shield
+  Users, Settings, Volume2, ChevronUp, Monitor, Shield, ScreenShare, ScreenShareOff
 } from 'lucide-react';
+import { SelfieSegmentation } from '@mediapipe/selfie_segmentation';
 import useWebRTC from '../hooks/useWebRTC';
 import useAudioLevel from '../hooks/useAudioLevel';
 import VideoGrid from '../components/VideoGrid';
@@ -29,15 +30,44 @@ const Room = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState('AUDIO');
   const [clock, setClock] = useState('');
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [virtualBgMode, setVirtualBgMode] = useState('OFF'); // OFF | BLUR | COLOR
+  const [virtualBgColor, setVirtualBgColor] = useState('#0b1020');
 
   // ── Refs ─────────────────────────────────────────────────────────────
   const localVideoRef = useRef(null);
   const messagesEndRef = useRef(null);
   const streamRef = useRef(null);
   const settingsRef = useRef(null);
+  const screenStreamRef = useRef(null);
+  const screenVideoTrackRef = useRef(null);
+  const vbg = useRef({
+    active: false,
+    raf: 0,
+    inputVideo: null,
+    outputCanvas: null,
+    outputCtx: null,
+    personCanvas: null,
+    personCtx: null,
+    seg: null,
+    stream: null,
+    track: null,
+    lastTs: 0,
+  });
 
   // ── WebRTC ──────────────────────────────────────────────────────────
-  const { peers, messages, sendMessage } = useWebRTC(joined ? id : null, localStream);
+  const {
+    peers,
+    messages,
+    sendMessage,
+    socketStatus,
+    socketError,
+    socketId,
+    roomMembers,
+    hostId,
+    sendModerationAction,
+    lastModerationAction,
+  } = useWebRTC(joined ? id : null, localStream);
   const localAudioLevel = useAudioLevel(localStream, isMicOn);
 
   // ── Live clock ──────────────────────────────────────────────────────
@@ -55,6 +85,26 @@ const Room = () => {
     setMics(all.filter(d => d.kind === 'audioinput'));
     setSpeakers(all.filter(d => d.kind === 'audiooutput'));
   }, []);
+
+  const buildActiveStream = useCallback((audioTracks, videoTrack) => {
+    const tracks = [];
+    if (audioTracks && audioTracks.length) tracks.push(...audioTracks);
+    if (videoTrack) tracks.push(videoTrack);
+    return new MediaStream(tracks);
+  }, []);
+
+  const getCurrentOutgoingVideoTrack = useCallback(() => {
+    if (screenVideoTrackRef.current) return screenVideoTrackRef.current;
+    if (vbg.current.track) return vbg.current.track;
+    return streamRef.current?.getVideoTracks?.()?.[0] || null;
+  }, []);
+
+  const rebuildLocalStream = useCallback(() => {
+    const audioTracks = streamRef.current?.getAudioTracks?.() || localStream?.getAudioTracks?.() || [];
+    const vt = getCurrentOutgoingVideoTrack();
+    if (vt) setLocalStream(buildActiveStream(audioTracks, vt));
+    else if (streamRef.current) setLocalStream(streamRef.current);
+  }, [buildActiveStream, getCurrentOutgoingVideoTrack, localStream]);
 
   // ── 1. Init media ────────────────────────────────────────────────────
   const initMedia = useCallback(async () => {
@@ -81,7 +131,10 @@ const Room = () => {
         setSelectedMic(all.find(d => d.kind === 'audioinput')?.deviceId || '');
         if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = tmp;
-        setLocalStream(tmp);
+        // If we're currently screen sharing or using virtual BG, keep the active video track.
+        const vt = screenVideoTrackRef.current || vbg.current.track;
+        if (vt) setLocalStream(buildActiveStream(tmp.getAudioTracks(), vt));
+        else setLocalStream(tmp);
         setDeviceError(!constraints.video ? 'WARN: Camera unavailable — audio-only mode.' : '');
         return;
       } catch (err) {
@@ -103,7 +156,7 @@ const Room = () => {
       // permissions.query not supported (Firefox/some mobile) — use generic message
     }
     setDeviceError(msg);
-  }, [enumerateDevices]);
+  }, [buildActiveStream, enumerateDevices]);
 
   useEffect(() => {
     initMedia();
@@ -127,7 +180,9 @@ const Room = () => {
           if (!alive) { s.getTracks().forEach(t => t.stop()); return; }
           if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = s;
-          setLocalStream(s);
+          const vt = screenVideoTrackRef.current || vbg.current.track;
+          if (vt) setLocalStream(buildActiveStream(s.getAudioTracks(), vt));
+          else setLocalStream(s);
           setDeviceError('');
           return;
         } catch { /* noop */ }
@@ -136,7 +191,203 @@ const Room = () => {
     };
     open();
     return () => { alive = false; };
-  }, [selectedCamera, selectedMic]);
+  }, [selectedCamera, selectedMic, buildActiveStream]);
+
+  const stopVirtualBg = useCallback(() => {
+    const state = vbg.current;
+    state.active = false;
+    if (state.raf) cancelAnimationFrame(state.raf);
+    state.raf = 0;
+    try { state.seg?.close?.(); } catch { /* noop */ }
+    state.seg = null;
+    if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+    state.track = null;
+    state.inputVideo = null;
+    state.outputCanvas = null;
+    state.outputCtx = null;
+    state.personCanvas = null;
+    state.personCtx = null;
+    state.lastTs = 0;
+    rebuildLocalStream();
+  }, [rebuildLocalStream]);
+
+  const startVirtualBg = useCallback(async () => {
+    if (virtualBgMode === 'OFF') return;
+    if (isScreenSharing) {
+      setDeviceError('VBG_DISABLED: Stop screen sharing to use virtual background.');
+      return;
+    }
+    const camStream = streamRef.current;
+    const camTrack = camStream?.getVideoTracks?.()?.[0] || null;
+    if (!camStream || !camTrack) {
+      setDeviceError('VBG_FAILED: No camera video track available.');
+      return;
+    }
+
+    // Clean any previous pipeline
+    stopVirtualBg();
+
+    // Create hidden video element fed by the camera stream
+    const inputVideo = document.createElement('video');
+    inputVideo.muted = true;
+    inputVideo.playsInline = true;
+    inputVideo.autoplay = true;
+    inputVideo.srcObject = camStream;
+    await inputVideo.play().catch(() => null);
+
+    const outputCanvas = document.createElement('canvas');
+    const outputCtx = outputCanvas.getContext('2d', { willReadFrequently: false });
+    const personCanvas = document.createElement('canvas');
+    const personCtx = personCanvas.getContext('2d', { willReadFrequently: false });
+    if (!outputCtx || !personCtx) {
+      setDeviceError('VBG_FAILED: Canvas not supported.');
+      return;
+    }
+
+    const seg = new SelfieSegmentation({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
+    });
+    seg.setOptions({ modelSelection: 1 });
+
+    const state = vbg.current;
+    state.active = true;
+    state.inputVideo = inputVideo;
+    state.outputCanvas = outputCanvas;
+    state.outputCtx = outputCtx;
+    state.personCanvas = personCanvas;
+    state.personCtx = personCtx;
+    state.seg = seg;
+    state.lastTs = 0;
+
+    seg.onResults((results) => {
+      const w = inputVideo.videoWidth || 1280;
+      const h = inputVideo.videoHeight || 720;
+      if (!w || !h) return;
+
+      if (outputCanvas.width !== w || outputCanvas.height !== h) {
+        outputCanvas.width = w;
+        outputCanvas.height = h;
+        personCanvas.width = w;
+        personCanvas.height = h;
+      }
+
+      // Build foreground(person) in personCanvas: image masked by segmentation mask
+      personCtx.clearRect(0, 0, w, h);
+      personCtx.drawImage(results.image, 0, 0, w, h);
+      personCtx.globalCompositeOperation = 'destination-in';
+      personCtx.drawImage(results.segmentationMask, 0, 0, w, h);
+      personCtx.globalCompositeOperation = 'source-over';
+
+      // Draw background
+      outputCtx.clearRect(0, 0, w, h);
+      if (virtualBgMode === 'BLUR') {
+        outputCtx.filter = 'blur(14px)';
+        outputCtx.drawImage(results.image, 0, 0, w, h);
+        outputCtx.filter = 'none';
+      } else if (virtualBgMode === 'COLOR') {
+        outputCtx.fillStyle = virtualBgColor;
+        outputCtx.fillRect(0, 0, w, h);
+      } else {
+        outputCtx.drawImage(results.image, 0, 0, w, h);
+      }
+
+      // Composite person on top
+      outputCtx.drawImage(personCanvas, 0, 0, w, h);
+    });
+
+    // Capture processed stream from canvas
+    const processedStream = outputCanvas.captureStream(30);
+    const processedTrack = processedStream.getVideoTracks()[0] || null;
+    if (!processedTrack) {
+      processedStream.getTracks().forEach((t) => t.stop());
+      setDeviceError('VBG_FAILED: Could not capture processed track.');
+      return;
+    }
+
+    state.stream = processedStream;
+    state.track = processedTrack;
+
+    // Build localStream with camera audio + processed video
+    const audioTracks = camStream.getAudioTracks();
+    setLocalStream(buildActiveStream(audioTracks, processedTrack));
+
+    const tick = async (ts) => {
+      if (!state.active) return;
+      // throttle segmentation to ~15fps
+      if (ts - state.lastTs > 66) {
+        state.lastTs = ts;
+        try {
+          await seg.send({ image: inputVideo });
+        } catch { /* noop */ }
+      }
+      state.raf = requestAnimationFrame(tick);
+    };
+    state.raf = requestAnimationFrame(tick);
+  }, [buildActiveStream, isScreenSharing, stopVirtualBg, virtualBgColor, virtualBgMode]);
+
+  const stopScreenShare = useCallback(() => {
+    setIsScreenSharing(false);
+    const ss = screenStreamRef.current;
+    if (ss) ss.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+    screenVideoTrackRef.current = null;
+
+    if (streamRef.current) {
+      rebuildLocalStream();
+    } else {
+      initMedia();
+    }
+  }, [initMedia, rebuildLocalStream]);
+
+  const startScreenShare = useCallback(async () => {
+    setDeviceError('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      setDeviceError('UNSUPPORTED: Screen sharing is not supported in this browser.');
+      return;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 30 },
+        audio: false,
+      });
+
+      const screenTrack = displayStream.getVideoTracks()[0] || null;
+      if (!screenTrack) {
+        displayStream.getTracks().forEach((t) => t.stop());
+        setDeviceError('SCREEN_SHARE_FAILED: No video track returned.');
+        return;
+      }
+
+      screenStreamRef.current = displayStream;
+      screenVideoTrackRef.current = screenTrack;
+      setIsScreenSharing(true);
+
+      screenTrack.onended = () => stopScreenShare();
+
+      // Screen share overrides virtual background output
+      if (vbg.current.track) stopVirtualBg();
+      const audioTracks = streamRef.current?.getAudioTracks?.() || localStream?.getAudioTracks?.() || [];
+      setLocalStream(buildActiveStream(audioTracks, screenTrack));
+    } catch (err) {
+      if (err?.name !== 'NotAllowedError') {
+        console.warn('[ScreenShare] getDisplayMedia failed:', err);
+      }
+      setDeviceError('SCREEN_SHARE_CANCELLED: Screen sharing was not started.');
+    }
+  }, [buildActiveStream, localStream, stopScreenShare, stopVirtualBg]);
+
+  // Keep virtual background pipeline in sync with mode/camera changes
+  useEffect(() => {
+    if (virtualBgMode === 'OFF') {
+      if (vbg.current.track) stopVirtualBg();
+      return;
+    }
+    if (isScreenSharing) return;
+    startVirtualBg();
+    return () => {};
+  }, [virtualBgMode, selectedCamera, isScreenSharing, startVirtualBg, stopVirtualBg]);
 
   // ── 3. Bind video ───────────────────────────────────────────────────
   useEffect(() => {
@@ -154,7 +405,25 @@ const Room = () => {
   }, [localStream, isMicOn, isVideoOn]);
 
   // ── 6. Cleanup ──────────────────────────────────────────────────────
-  useEffect(() => () => { if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop()); }, []);
+  useEffect(() => () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(t => t.stop());
+    if (vbg.current.stream) vbg.current.stream.getTracks().forEach((t) => t.stop());
+  }, []);
+
+  // Apply moderation actions
+  useEffect(() => {
+    if (!lastModerationAction?.action) return;
+    const a = lastModerationAction.action;
+    if (a.type === 'mute') setIsMicOn(false);
+    if (a.type === 'videoOff') setIsVideoOn(false);
+    if (a.type === 'kick') {
+      try { streamRef.current?.getTracks?.().forEach((t) => t.stop()); } catch { /* noop */ }
+      try { screenStreamRef.current?.getTracks?.().forEach((t) => t.stop()); } catch { /* noop */ }
+      try { vbg.current.stream?.getTracks?.().forEach((t) => t.stop()); } catch { /* noop */ }
+      navigate('/');
+    }
+  }, [lastModerationAction, navigate]);
 
   // ── 7. Close settings on outside click ──────────────────────────────
   useEffect(() => {
@@ -166,7 +435,9 @@ const Room = () => {
   // ── 8. Speaker output ──────────────────────────────────────────────
   useEffect(() => {
     if (!selectedSpeaker) return;
-    document.querySelectorAll('video, audio').forEach(el => { if (el.setSinkId) el.setSinkId(selectedSpeaker).catch(() => {}); });
+    document.querySelectorAll('video, audio').forEach(el => {
+      if (el.setSinkId) el.setSinkId(selectedSpeaker).catch(() => null);
+    });
   }, [selectedSpeaker, peers]);
 
   const toggleMic = () => setIsMicOn(p => !p);
@@ -400,6 +671,14 @@ const Room = () => {
             <Users size={12} style={{ marginRight: '0.3rem', verticalAlign: 'middle' }} />
             {1 + peerCount} connected
           </span>
+          <span style={{
+            color: socketStatus === 'connected' ? 'var(--neon-green)' : 'var(--text-dim)',
+            opacity: socketStatus === 'connected' ? 0.85 : 0.7,
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.66rem',
+          }}>
+            sig:{socketStatus}
+          </span>
           <span style={{ color: 'var(--neon-cyan)', opacity: 0.6 }}>{clock}</span>
         </div>
       </header>
@@ -407,6 +686,27 @@ const Room = () => {
       {/* ── Main ── */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative', background: '#06060a' }}>
+          {socketError && (
+            <div style={{
+              position: 'absolute',
+              top: '0.75rem',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 50,
+              maxWidth: '92%',
+              width: '560px',
+              background: 'rgba(255,59,59,0.08)',
+              border: '1px solid rgba(255,59,59,0.25)',
+              borderRadius: '10px',
+              padding: '0.7rem 0.9rem',
+              color: '#ff8b8b',
+              fontSize: '0.72rem',
+              fontFamily: 'var(--font-mono)',
+              whiteSpace: 'pre-line',
+            }}>
+              {socketError}
+            </div>
+          )}
           <VideoGrid localStream={localStream} peers={peers} />
         </main>
 
@@ -505,6 +805,15 @@ const Room = () => {
         <button onClick={toggleVideo} className={`btn ${isVideoOn ? 'btn-secondary' : 'btn-danger'}`}
           style={{ borderRadius: '6px', padding: '0.55rem' }}>
           {isVideoOn ? <VideoIcon size={18} /> : <VideoOff size={18} />}
+        </button>
+
+        <button
+          onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+          className={`btn ${isScreenSharing ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ borderRadius: '6px', padding: '0.55rem' }}
+          title={isScreenSharing ? 'Stop screen sharing' : 'Share your screen'}
+        >
+          {isScreenSharing ? <ScreenShareOff size={18} /> : <ScreenShare size={18} />}
         </button>
 
         <button onClick={() => setIsChatOpen(c => !c)}
@@ -608,13 +917,52 @@ const Room = () => {
                 )}
 
                 {settingsTab === 'VIDEO' && (
-                  <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
                     <label style={{ fontSize: '0.65rem', color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: '0.2rem', marginBottom: '0.25rem' }}>
                       <Monitor size={11} /> CAM_SOURCE
                     </label>
                     <select value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)} style={selectStyle}>
                       {cameras.map(c => <option key={c.deviceId} value={c.deviceId} style={{ background: '#0a0a0f' }}>{c.label || `CAM_${c.deviceId.slice(0,6)}`}</option>)}
                     </select>
+
+                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.35rem' }}>VIRTUAL_BACKGROUND</div>
+                      <select
+                        value={virtualBgMode}
+                        onChange={(e) => setVirtualBgMode(e.target.value)}
+                        style={selectStyle}
+                        disabled={isScreenSharing}
+                      >
+                        <option value="OFF" style={{ background: '#0a0a0f' }}>OFF</option>
+                        <option value="BLUR" style={{ background: '#0a0a0f' }}>BLUR</option>
+                        <option value="COLOR" style={{ background: '#0a0a0f' }}>SOLID_COLOR</option>
+                      </select>
+
+                      {virtualBgMode === 'COLOR' && (
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                          <input
+                            type="color"
+                            value={virtualBgColor}
+                            onChange={(e) => setVirtualBgColor(e.target.value)}
+                            style={{ width: '38px', height: '28px', border: 'none', background: 'transparent' }}
+                          />
+                          <input
+                            type="text"
+                            className="input-glass"
+                            value={virtualBgColor}
+                            onChange={(e) => setVirtualBgColor(e.target.value)}
+                            style={{ flex: 1, padding: '0.35rem 0.5rem', fontSize: '0.72rem' }}
+                          />
+                        </div>
+                      )}
+
+                      {isScreenSharing && (
+                        <p style={{ margin: '0.45rem 0 0', fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                          {'// disabled during screen share'}
+                        </p>
+                      )}
+                    </div>
+
                     <div style={{ marginTop: '0.5rem', fontSize: '0.62rem', color: 'var(--text-dim)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <span>Resolution:</span><span style={{ color: 'var(--neon-cyan)' }}>720p</span>
@@ -627,7 +975,7 @@ const Room = () => {
                 )}
 
                 {settingsTab === 'GENERAL' && (
-                  <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                       <span>Protocol:</span><span style={{ color: 'var(--neon-green)' }}>WebRTC_v3</span>
                     </div>
@@ -637,8 +985,85 @@ const Room = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                       <span>Signaling:</span><span style={{ color: 'var(--neon-cyan)' }}>Socket.IO</span>
                     </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                      <span>Host:</span><span style={{ color: 'var(--neon-cyan)' }}>{hostId ? hostId.substring(0, 6) : '—'}</span>
+                    </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Build:</span><span style={{ color: 'var(--text-dim)' }}>v1.2.a_build</span>
+                    </div>
+
+                    {/* Moderation */}
+                    <div style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '0.6rem' }}>
+                      <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', marginBottom: '0.45rem' }}>MODERATION</div>
+                      {socketId && hostId === socketId ? (
+                        <>
+                          <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.72rem', borderRadius: '6px', padding: '0.4rem 0.6rem' }}
+                              onClick={() => sendModerationAction('all', { type: 'mute' })}
+                            >
+                              mute_all()
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ fontSize: '0.72rem', borderRadius: '6px', padding: '0.4rem 0.6rem' }}
+                              onClick={() => sendModerationAction('all', { type: 'videoOff' })}
+                            >
+                              video_off_all()
+                            </button>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', maxHeight: '160px', overflowY: 'auto' }}>
+                            {(roomMembers || []).filter((m) => m !== socketId).map((m) => (
+                              <div key={m} style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                gap: '0.4rem',
+                                alignItems: 'center',
+                                padding: '0.35rem 0.45rem',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                                borderRadius: '8px',
+                                background: 'rgba(0,0,0,0.25)',
+                              }}>
+                                <span style={{ color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', fontSize: '0.68rem' }}>
+                                  {m.substring(0, 8)}
+                                </span>
+                                <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.7rem', borderRadius: '6px', padding: '0.3rem 0.45rem' }}
+                                    onClick={() => sendModerationAction(m, { type: 'mute' })}
+                                  >
+                                    mute
+                                  </button>
+                                  <button
+                                    className="btn btn-secondary"
+                                    style={{ fontSize: '0.7rem', borderRadius: '6px', padding: '0.3rem 0.45rem' }}
+                                    onClick={() => sendModerationAction(m, { type: 'videoOff' })}
+                                  >
+                                    video_off
+                                  </button>
+                                  <button
+                                    className="btn btn-danger"
+                                    style={{ fontSize: '0.7rem', borderRadius: '6px', padding: '0.3rem 0.45rem' }}
+                                    onClick={() => sendModerationAction(m, { type: 'kick' })}
+                                  >
+                                    kick
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                            {(!roomMembers || roomMembers.length <= 1) && (
+                              <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-dim)' }}>{'// no other participants'}</p>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: '0.68rem', color: 'var(--text-dim)' }}>
+                          {'// host-only controls'}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}
