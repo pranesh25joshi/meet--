@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic, MicOff, Video as VideoIcon, VideoOff, LogOut, MessageSquare,
@@ -49,15 +49,15 @@ const Room = () => {
   }, []);
 
   // ── Enumerate devices ──────────────────────────────────────────────
-  const enumerateDevices = async () => {
+  const enumerateDevices = useCallback(async () => {
     const all = await navigator.mediaDevices.enumerateDevices();
     setCameras(all.filter(d => d.kind === 'videoinput'));
     setMics(all.filter(d => d.kind === 'audioinput'));
     setSpeakers(all.filter(d => d.kind === 'audiooutput'));
-  };
+  }, []);
 
   // ── 1. Init media ────────────────────────────────────────────────────
-  const initMedia = async () => {
+  const initMedia = useCallback(async () => {
     setDeviceError('');
 
     // Check if mediaDevices API exists (missing on HTTP in mobile browsers)
@@ -99,16 +99,16 @@ const Room = () => {
       } else if (camPerm.state === 'prompt') {
         msg = 'NOT_GRANTED: Browser did not show the permission prompt. Try the RETRY button below.';
       }
-    } catch (_) {
+    } catch {
       // permissions.query not supported (Firefox/some mobile) — use generic message
     }
     setDeviceError(msg);
-  };
+  }, [enumerateDevices]);
 
   useEffect(() => {
     initMedia();
     return () => {};
-  }, []);
+  }, [initMedia]);
 
   // ── 2. Switch devices ───────────────────────────────────────────────
   const initialDeviceSet = useRef(false);
@@ -130,7 +130,7 @@ const Room = () => {
           setLocalStream(s);
           setDeviceError('');
           return;
-        } catch (_) {}
+        } catch { /* noop */ }
       }
       setDeviceError('SWITCH_FAILED: Could not change device.');
     };
@@ -393,7 +393,7 @@ const Room = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <span className="pulse-dot" style={{ width: '6px', height: '6px' }} />
           <span style={{ color: 'var(--neon-cyan)', fontWeight: 600 }}>MEET++</span>
-          <span style={{ color: 'var(--text-dim)' }}>// {id}</span>
+          <span style={{ color: 'var(--text-dim)' }}>{'// '}{id}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
           <span style={{ color: 'var(--text-dim)' }}>
@@ -430,7 +430,7 @@ const Room = () => {
             }}>
               {messages.length === 0 && (
                 <p style={{ color: 'var(--text-dim)', fontSize: '0.72rem', textAlign: 'center', marginTop: '2rem' }}>
-                  // messages broadcast to all peers
+                  {'// messages broadcast to all peers'}
                 </p>
               )}
               {messages.map(msg => (
@@ -589,7 +589,7 @@ const Room = () => {
                           {speakers.map(s => <option key={s.deviceId} value={s.deviceId} style={{ background: '#0a0a0f' }}>{s.label || `SPK_${s.deviceId.slice(0,6)}`}</option>)}
                         </select>
                       ) : (
-                        <p style={{ fontSize: '0.68rem', color: 'var(--text-dim)', margin: 0 }}>// not supported in this browser</p>
+                        <p style={{ fontSize: '0.68rem', color: 'var(--text-dim)', margin: 0 }}>{'// not supported in this browser'}</p>
                       )}
                     </div>
                     {/* System stats */}

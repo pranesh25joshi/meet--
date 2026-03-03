@@ -64,11 +64,11 @@ const Landing = () => {
             <span style={{ color: 'var(--text-dim)' }}>&lt;</span>
             <span style={{ color: 'var(--neon-cyan)' }}>VideoCalls</span>
             <span style={{ color: 'var(--text-dim)' }}> mode=</span>
-            <span style={{ color: 'var(--neon-green)' }}>"premium"</span>
+            <span style={{ color: 'var(--neon-green)' }}>&quot;premium&quot;</span>
             <span style={{ color: 'var(--text-dim)' }}> /&gt;</span>
           </h1>
           <p style={{ color: 'var(--text-comment)', fontSize: '0.88rem', lineHeight: 1.7 }}>
-            <span style={{ color: 'var(--text-dim)' }}>// </span>
+            <span style={{ color: 'var(--text-dim)' }}>{'// '}</span>
             Optimized for developers. We re-engineered the kernel for high-fidelity
             peer-to-peer communication. Now open-source for everyone.
           </p>

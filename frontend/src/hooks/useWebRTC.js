@@ -11,6 +11,16 @@ const ICE_SERVERS = {
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5001';
 
+const ensureMediaTransceivers = (pc) => {
+  const transceivers = pc.getTransceivers();
+  const hasAudio = transceivers.some((t) => t.receiver?.track?.kind === 'audio');
+  const hasVideo = transceivers.some((t) => t.receiver?.track?.kind === 'video');
+
+  // Ensure both m-lines exist even if we have no local tracks (or audio-only).
+  if (!hasAudio) pc.addTransceiver('audio', { direction: 'sendrecv' });
+  if (!hasVideo) pc.addTransceiver('video', { direction: 'sendrecv' });
+};
+
 const useWebRTC = (roomId, localStream) => {
   const [peers, setPeers] = useState({});
   const [messages, setMessages] = useState([]);
@@ -30,9 +40,16 @@ const useWebRTC = (roomId, localStream) => {
     if (!localStream) return;
     const pcs = pcsRef.current;
     Object.entries(pcs).forEach(([peerId, pc]) => {
-      const senders = pc.getSenders();
+      const transceivers = pc.getTransceivers();
+      const findSenderForKind = (kind) => {
+        // Prefer the sender associated with the transceiver for that kind,
+        // even when sender.track is currently null.
+        const t = transceivers.find((x) => x.receiver?.track?.kind === kind);
+        return t?.sender || pc.getSenders().find((s) => s.track?.kind === kind) || null;
+      };
+
       localStream.getTracks().forEach((newTrack) => {
-        const sender = senders.find(s => s.track && s.track.kind === newTrack.kind);
+        const sender = findSenderForKind(newTrack.kind);
         if (sender) {
           console.log(`[WebRTC] Replacing ${newTrack.kind} track in PC for ${peerId}`);
           sender.replaceTrack(newTrack).catch(err =>
@@ -67,12 +84,21 @@ const useWebRTC = (roomId, localStream) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcsRef.current[peerId] = pc;
 
+    // Create audio+video m-lines up front so:
+    // - audio-only users can still RECEIVE video from others
+    // - users who deny devices can still participate and receive media
+    ensureMediaTransceivers(pc);
+
     // Add local tracks
     const stream = localStreamRef.current;
     if (stream) {
       stream.getTracks().forEach((track) => {
         console.log(`[WebRTC] Adding local ${track.kind} track for ${peerId}`);
-        pc.addTrack(track, stream);
+        try {
+          pc.addTrack(track, stream);
+        } catch (err) {
+          console.warn('[WebRTC] addTrack error:', err);
+        }
       });
     } else {
       console.warn('[WebRTC] No local stream when creating PC for', peerId);
@@ -121,6 +147,7 @@ const useWebRTC = (roomId, localStream) => {
     const socket = io(SOCKET_URL, { transports: ['websocket'] });
     socketRef.current = socket;
     console.log('[WebRTC] Connecting for room:', roomId);
+    const offerTimeouts = [];
 
     // ── Create offer and send ─────────────────────────────────────────
     const sendOfferTo = async (peerId) => {
@@ -148,7 +175,8 @@ const useWebRTC = (roomId, localStream) => {
     // Add a small delay to ensure the new joiner has set up their listeners
     socket.on('user-connected', (peerId) => {
       console.log(`[WebRTC] New user: ${peerId} → sending offer in 500ms`);
-      setTimeout(() => sendOfferTo(peerId), 500);
+      const t = setTimeout(() => sendOfferTo(peerId), 500);
+      offerTimeouts.push(t);
     });
 
     // ── Server tells us who is already in the room ────────────────────
@@ -227,13 +255,14 @@ const useWebRTC = (roomId, localStream) => {
     // ── Cleanup ───────────────────────────────────────────────────────
     return () => {
       console.log('[WebRTC] Cleanup');
+      offerTimeouts.forEach((t) => clearTimeout(t));
       socket.disconnect();
       Object.values(pcsRef.current).forEach((pc) => pc.close());
       pcsRef.current = {};
       pendingCandidatesRef.current = {};
       setPeers({});
     };
-  }, [roomId]);
+  }, [roomId, createPeerConnection]);
 
   // ── Send chat message ───────────────────────────────────────────────
   const sendMessage = (text) => {

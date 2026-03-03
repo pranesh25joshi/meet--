@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import PropTypes from 'prop-types';
 import { Pin, PinOff, ChevronLeft, ChevronRight, Users } from 'lucide-react';
 import useAudioLevel from '../hooks/useAudioLevel';
 
@@ -96,6 +97,15 @@ const StreamVideo = ({ stream, isLocal, label, isPinned, onPin, compact }) => {
   );
 };
 
+StreamVideo.propTypes = {
+  stream: PropTypes.object,
+  isLocal: PropTypes.bool,
+  label: PropTypes.string,
+  isPinned: PropTypes.bool,
+  onPin: PropTypes.func,
+  compact: PropTypes.bool,
+};
+
 /* ── Main grid ────────────────────────────────────────────────────────── */
 const VideoGrid = ({ localStream, peers }) => {
   const [pinnedId, setPinnedId] = useState(null);
@@ -188,6 +198,11 @@ const VideoGrid = ({ localStream, peers }) => {
       )}
     </div>
   );
+};
+
+VideoGrid.propTypes = {
+  localStream: PropTypes.object,
+  peers: PropTypes.object,
 };
 
 export default VideoGrid;

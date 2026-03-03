@@ -67,8 +67,8 @@ const useAudioLevel = (stream, enabled = true) => {
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      try { source.disconnect(); } catch (_) {}
-      try { ctx.close(); } catch (_) {}
+      try { source.disconnect(); } catch { /* noop */ }
+      try { ctx.close(); } catch { /* noop */ }
       setLevel(0);
     };
   }, [stream, enabled]);
